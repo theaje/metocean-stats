@@ -600,14 +600,447 @@ def plot_RVE_ALL(dataframe,var='hs',periods=np.array([1,10,100,1000]),distributi
         output_file= distribution + '(' + method + ')' + '.png'
         
     plot_return_levels(dataframe,var,value,periods,output_file,it_selected_max)
-       
+        
     return 
 
-################
+##################### down
+
+def plot_TaylorDiagram(df,modell,obs, NSTD, output_file):
+    from matplotlib.projections import PolarAxes
+    import mpl_toolkits.axisartist.floating_axes as FA
+    import mpl_toolkits.axisartist.grid_finder as GF
+    import matplotlib.pyplot as plt
+    import numpy as np
+    #########
+    # Create a random number generator
+    #rng = np.random.default_rng(seed=42)
+    
+    #breakpoint()
+    #for i in range(len(modell)-1):
+    #    uniform_samples = rng.uniform(low=1.0, high=2.0, size=1)
+    #    var = modell[i+1]
+    #    df[var] = df[modell[0]]*uniform_samples
+    #########
+
+    model_ref = df[modell[0]]
+    std_mod = df[model_ref.name].std()
+    stdref=std_mod/std_mod if NSTD else std_mod
+    var = [*modell,*obs]
+
+   # breakpoint()
+    def set_up_axes_and_corr(refstd, fig, maxx, rect=111):
+        # Setting x-y range
+        smin = 0 
+        smax = maxx + 0.5
+        
+        # Set Correlation
+        corr = np.array([0, 0.2, 0.4, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 1]) #standard 
+   
+        tlocs = np.arccos(corr)        # Conversion to polar angles
+        gl1 = GF.FixedLocator(tlocs)    # Positions
+        tf1 = GF.DictFormatter(dict(zip(tlocs, map(str, corr))))
+
+        tmax = np.pi/2  #1/4 of a circle
+        tr = PolarAxes.PolarTransform()
+        ghelper = FA.GridHelperCurveLinear(
+            tr, extremes=(0, tmax, smin, smax),
+            grid_locator1=gl1, tick_formatter1=tf1)
+
+        ax = FA.FloatingSubplot(fig, rect, grid_helper=ghelper)
+        fig.add_subplot(ax)
+        ax.grid()
+
+        # Adjust axes
+        ax.axis["top"].set_axis_direction("bottom")   # "Angle axis"
+        ax.axis["top"].toggle(ticklabels=True, label=True)
+        ax.axis["top"].major_ticklabels.set_axis_direction("top")
+        ax.axis["top"].label.set_axis_direction("top")
+        ax.axis["top"].label.set_text("Correlation Coefficient")
+
+        ax.axis["left"].set_axis_direction("bottom")  # "X axis"
+        if NSTD==True:
+            ax.axis["left"].label.set_text("Normalized Standard Deviation")
+        else:
+            ax.axis["left"].label.set_text("Standard Deviation")
+        ax.axis["right"].set_axis_direction("top")    # "Y-axis"
+        ax.axis["right"].toggle(ticklabels=True)
+        ax.axis["right"].major_ticklabels.set_axis_direction("left")
+
+        ax.axis["bottom"].set_visible(False)     
+
+        ax.axis[:].major_ticks.set_tick_out(True)  # Put ticks outward 
+
+        ax = ax.get_aux_axes(tr)   # Polar coordinates
+
+        ds = pd.DataFrame({'smin': [smin], 'smax': [smax], 'tmax': [tmax], 'refstd': [refstd]})
+
+        return ax, ds
+    
+
+    def add_contours(ax,ds,levels=5, **kwargs):
+        #Add constant centered RMS difference contours, defined by *levels*.
+        rs, ts = np.meshgrid(np.linspace(ds.smin, ds.smax), np.linspace(0, ds.tmax))
+
+        # Compute centered RMS difference 
+        rms = np.sqrt(np.square(float(ds.refstd)) + np.square(rs) - 2*float(ds.refstd)*rs*np.cos(ts))
+    
+        contours = ax.contour(ts, rs, rms, levels, **kwargs)
+
+        return contours
+    
+
+    def plot(df,std_mod,stdref):
+        fig = plt.figure()
+
+        maxx=np.max(df[var].std())/std_mod if NSTD else np.max(df[var].std()) #max value on the x-y axis
+        ax, ds = set_up_axes_and_corr(stdref,fig,maxx)
+    
+        # Add RMS contours, and label them
+        contours = add_contours(ax, ds, levels=6, colors='0.5',stdref=stdref)  # 5 levels in grey
+        plt.clabel(contours, inline=1, fontsize=10, fmt='%.1f')
+
+        # Define base marker and color lists
+        base_mrk = ['o', 's', 'D', '^', 'v', '<', '>', 'p', '*', 'h']
+        base_cols = ['red', 'green', 'blue', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+        # Repeat markers and colors to match the number of samples
+        num_samples = len(var) #len(obs)
+        mrk = (base_mrk * (num_samples // len(base_mrk) + 1))[:num_samples]
+        cols = (base_cols * (num_samples // len(base_cols) + 1))[:num_samples]
+
+        #Add reference point and stdref contour
+        ax.plot(0, stdref, 'ko', ls='', clip_on=False, label=df[model_ref.name].name)
+        t = np.linspace(0, ds.tmax)
+        s = np.zeros_like(t) + stdref 
+        ax.plot(t, s, 'k--', label='_')
+     #   breakpoint()
+        #Add rest of the data
+        for i in range(len(modell)-1):
+                stddev=df[modell[i+1]].std()/std_mod if NSTD else df[modell[i+1]].std() #std for each model
+                corrcoef = df[model_ref.name].corr(df[modell[i+1]]) #corr between model_ref and the samples
+                ax.plot(np.arccos(corrcoef), stddev,
+                            marker=mrk[i], ms=6, ls='', clip_on=False,
+                            mfc=cols[i], mec=cols[i], label=df[modell[i+1]].name) 
+        for i in range(len(obs)): 
+                stddev = df[obs[i]].std()/std_mod if NSTD else df[obs[i]].std() #std for each observation
+                corrcoef=df[model_ref.name].corr(df[obs[i]])  #corr between model_ref and the samples
+                ax.plot(np.arccos(corrcoef), stddev,# / std_mod,
+                            marker=mrk[i], ms=6, ls='', clip_on=False,
+                            #mfc=cols[i], 
+                            mfc='none',
+                            mec=cols[i], label=df[obs[i]].name)
+
+        # Determine the number of columns for the legend
+        num_lines = len(modell+obs)
+        ncol=1 if num_lines < 7 else 2
+        ax.legend(prop=dict(size='small'),ncol=ncol,loc='upper right',bbox_to_anchor=(1.2, 1.))
+        fig.tight_layout()
+        plt.subplots_adjust(bottom=0.1)
+        plt.savefig(output_file)
+        return
+    
+    plot(df,std_mod,stdref)
+    plt.show()
+    return
+
+##################### above
+##testing of Taylor from Clio
+
+#def taylor_diagram(df,var_obs,var_mod,norm_std=True):
+def taylor_diagram(df,var_ref,var_comp,norm_std=True,output_file='Taylor_diagram.png'):
+
+    import matplotlib.pyplot as plt
+    import math
+    import matplotlib.lines as mlines
+    import matplotlib.ticker as ticker
+
+    """
+    Plot a Taylor diagram
+    df: dataframe with all timeseries
+    var_ref: list of string with the name of the timeseries of reference
+    var_comp: list of strings with the names of the timeseries to be compared with the reference
+    norm_std: option to define normalized or non-normalized standard deviation
+
+    Option 1: #[[A,3],[B,3],[C,3]]
+    var_ref   = ['hs_sulaA','hs_sulaB','hs_sulaC'] 
+    var_comp = ['hs_nora3']
+    norm_std = True #can only run with this option
+
+    Option 2 : #Originalen [[A,3],[A,4],[A,5]]
+    var_ref   = ['hs_sulaA']
+    var_comp = ['hs_nora3','hs_nora4','hs_nora5']
+    norm_std = True/False #can run with both options
+
+    Option 3 : #[[A,3],[B,4],[C,5]]
+    var_ref   = ['hs_sulaA','hs_sulaB','hs_sulaC']
+    var_comp = ['hs_nora3','hs_nora4','hs_nora5']
+    norm_std = True #can only run with this option
+
+    """
+
+    def run_taylor(var_ref,var_comp,maxx,index,show,fig, ax):
+        def correlation(var_ref,var_comp,max_std,radius):
+            # Calculate the coordinates of the points x and y
+            # Correlation coefficient between the reference and the other(s)
+            ccf=np.zeros((len(var_comp)+1))
+            ccf[0]=np.corrcoef(df[var_ref[0]].to_numpy(),df[var_ref[0]].to_numpy())[0,1] # Should be 1
+            for i in range(len(var_comp)):
+                ccf[i+1]=np.corrcoef(df[var_ref[0]].to_numpy(),df[var_comp[i]].to_numpy())[0,1]     
+
+            # Coordinates of the lines for the correlation
+            xbc1=np.arange(0.0,max_std+0.015,0.001)
+            corr=np.array([0.2,0.4,0.6,0.8,0.9,0.95,0.99])
+            ycr=np.zeros((len(corr),len(xbc1)))
+            for r in range(len(corr)):
+                for a in range(len(xbc1)):
+                    ycr[r,a]=math.tan(math.acos(corr[r]))*xbc1[a]
+                    d=np.sqrt(ycr[r,a]**2+xbc1[a]**2)
+                    if d>np.max(radius):
+                        ycr[r,a]=np.nan
+                    del d
+            return ccf,xbc1,ycr,corr
+
+        def set_axes_and_std(var_ref,var_comp,maxx):
+            std=np.zeros((len(var_comp)+1))
+            std[0]=np.std(df[var_ref].to_numpy())
+            for i in range(len(var_comp)):
+                std[i+1]=np.std(df[var_comp[i]].to_numpy())
+            if norm_std==True:
+                std=std/std[0]
+
+            # Coordinates of the big circles
+            min_std=0
+            max_std=maxx + 0.5 #to set the max of x-y
+
+            if max_std<=5:
+                step=0.5
+            elif ((max_std>5) & (max_std<=10)):
+                step=1
+            elif ((max_std>10) & (max_std<=20)):
+                step=3
+            else:
+                step=5
+
+            radius=np.arange(min_std+step,max_std,step)
+            radius=np.concatenate([radius,np.array([max_std])])
+            radius1=radius
+            xbc=np.arange(0.0,max_std+0.01,0.0001)
+            ybc=np.zeros((len(radius),len(xbc)))
+            ysc=np.zeros((len(radius),len(xbc)))
+            for r in range(len(radius)):
+                for a in range(len(xbc)):
+                    ybc[r,a]=np.sqrt(radius[r]**2-xbc[a]**2)
+                    ysc[r,a]=np.sqrt(radius1[r]**2-(xbc[a]-std[0])**2)
+                    d=np.sqrt(ysc[r,a]**2+xbc[a]**2)
+                    if d>np.max(radius):
+                        ysc[r,a]=np.nan
+                    del d
+
+            return std,max_std,radius,xbc,ybc,step
+
+        def plotting(var_ref,var_comp,maxx,index):
+            #Plot the data
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+
+            #Get the data
+            std,max_std,radius,xbc,ybc,step=set_axes_and_std(var_ref,var_comp,maxx)
+            ccf,xbc1,ycr,corr = correlation(var_ref,var_comp,max_std,radius)
+            # Coordinates of the correlation labels
+            corr1=np.array([0.0,0.2,0.4,0.6,0.8,0.9,0.95,0.99,1.0])
+            text=[]
+            xt=np.zeros((len(corr1)))
+            yt=np.zeros((len(corr1)))
+            #angle=np.zeros((len(corr1)))
+            angle=np.array([0,-10,-24,-37,-50,-62,-71,-82,-90])
+            for i in range(len(corr1)):
+                text.append(str(corr1[i]))
+                xt[i]=corr1[i]*(max_std+0.1)
+                yt[i]=math.sin(math.acos(corr1[i]))*(max_std+0.1)
+                #angle[i]=math.acos(corr1[i])*180.0/math.pi
+                angle[i]=angle[i]
+            #angle=0.0-angle[::-1]
+            
+            if show==True:
+                for r in range(len(radius)):
+                    ax.plot(xbc[:],ybc[r,:],'k',linewidth=1.0)
+                for r in range(len(corr)):
+                    ax.plot(xbc1[:],ycr[r,:],'k',linewidth=1.0,linestyle='dotted')
+
+            rmsdif=np.sqrt(std**2+std[0]**2-2*std*std[0]*ccf)
+            
+            # Coordinates
+            x=ccf*std
+            y=np.sqrt((rmsdif**2)-((std[0]-x)**2))
+            xa=np.linspace(0,max_std+1,1000)
+            xx,yy=np.meshgrid(xa,xa)
+            del xa
+            zz=np.sqrt((xx-std[0])**2+yy**2)
+            zz1=np.sqrt(xx**2+yy**2)
+            zz=np.where(zz1>max_std,np.nan,zz)
+            del zz1
+
+            levels_crms=np.arange(step,np.nanmax(zz)-step,step) if step<1 else np.arange(step,np.nanmax(zz),step)
+            CS = ax.contour(xx,yy,zz,colors='gray',linewidths=1.0,linestyles='--',levels=levels_crms)
+            fmt = ticker.ScalarFormatter()
+            fmt.create_dummy_axis()
+            list_tup=[(std[0],yv) for yv in levels_crms]
+            ax.clabel(CS, CS.levels, fmt=fmt, fontsize=14,inline=True,inline_spacing=-2,manual=list_tup)
+
+            # Plot reference point in black
+            ax.plot(std[0],0.0,'o',clip_on=False,color='k', markersize=14)
+            # Plot reference circle
+            ybc_r=np.sqrt(std[0]**2-xbc**2)
+            ax.plot(xbc,ybc_r,'k',linewidth=2.0)
+
+            # Plot the other points
+            # List of potential markers
+            list_mrk = ['o', 's', 'D', '^', 'v', '<', '>', 'p', '*', 'h']
+            # List of potential colors
+            list_col = ['red', 'green', 'blue', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+            combinations = [[x, y] for x in list_mrk for y in list_col] # First index is the marker, second the color
+            combinations=combinations[0:index] if index>0 else combinations[0:len(var_comp)]
+
+            if (index==0) or (index==1):
+                legends.append(mlines.Line2D([], [], color='k', marker='o', linestyle='None',markersize=14, label=var_ref[0]))
+            else:
+                legends.append(mlines.Line2D([], [], color='k', marker='o', linestyle='None',markersize=14, label=var_ref[0]))
+        
+            if index==0:
+                index = index+1
+            for ri,rj in zip(range(1,len(var_comp)+1),range(index,len(var_comp)+index)): # Actual plotting of the data
+                ax.plot(x[ri],y[ri],clip_on=False,marker=combinations[rj-1][0],color=combinations[rj-1][1],markersize=14,markerfacecolor=combinations[rj-1][1])
+                legends.append(mlines.Line2D([],[],marker=combinations[rj-1][0],color=combinations[rj-1][1], linestyle='None',markersize=14, label=var_comp[ri-1]))
+
+            if show==True:
+                num_lines = len(legends)
+                ncol=1 if num_lines < 7 else 2 if num_lines < 13 else 3
+                Size='x-large' if ncol<3 else 'large' 
+                plt.legend(prop=dict(size=Size),handles=legends,ncol=ncol,loc="upper right", fontsize="20",bbox_to_anchor=(1.1, 1.))
+
+            ax.text(max_std*0.73, max_std*0.73, 'Correlation',ha="center", va="center", size=18, rotation=-45.)
+            
+            for i in range(len(corr1)):
+                ax.plot(xt[i],yt[i],clip_on=False,marker='o',color='None',markersize=6,markerfacecolor='None')
+                ax.text(xt[i],yt[i],text[i],ha="center", va="center", size=16, rotation=angle[i])
+            
+            if norm_std==True:
+                ax.set_xlabel('Normalized standard deviation',fontsize=18)
+            else:
+                ax.set_xlabel('Standard deviation',fontsize=18)
+            
+            if show==True:
+                plt.xlim(0,max_std+0.02)
+                plt.ylim(0,max_std+0.02)
+                plt.xticks(fontsize=16)
+                plt.yticks(fontsize=16)
+                plt.show()
+            return 
+
+        plotting(var_ref,var_comp,maxx,index)
+        return
+    
+    legends = []
+    if (len(var_ref)<len(var_comp)) and (len(var_ref)==1): #for option 2
+        fig, ax = plt.subplots(figsize=(10, 10))
+        model_ref = df[var_ref[0]] 
+        std_mod = df[model_ref.name].std()
+        var=[*var_ref,*var_comp] 
+        #to find the max of the variables to set the len of axis 
+        maxx=int(np.max(df[var].std())/std_mod if norm_std else np.max(df[var].std())) #max value on the x-y axis
+        show=True #Always true in this case
+        index=0        
+        var_ref = np.array(var_ref)
+        run_taylor(var_ref,var_comp,maxx,index,show,fig, ax)
+
+    elif (len(var_ref)>len(var_comp)) and (len(var_comp)==1): #for option 1
+        if norm_std != True:
+            print('This option can only be runned with normalized standard deviation as True.')
+            return
+        fig, ax = plt.subplots(figsize=(10, 10))
+        var=[*var_ref,*var_comp]
+        i_end = len(var_ref)
+        minn = np.nanmin(df[var_ref].std())
+        stdd_c = df[var_comp].std()
+        maxx = int(np.max(stdd_c/minn))
+        index = 0
+        #loop over len of var_ref
+        for i in range(len(var_ref)):
+            var_ref1 = var_ref[i]
+            var_comp1 = var_comp[0]
+            model_ref = df[var_ref1]
+            std_mod = df[model_ref.name].std()
+            if i==i_end-1:
+                show=True
+                index = index+1
+                run_taylor([var_ref1],[var_comp1],maxx,index,show,fig,ax)
+            else:
+                show=False
+                index = index + 1
+                run_taylor([var_ref1],[var_comp1],maxx,index,show,fig,ax)
+
+    elif len(var_ref)==len(var_comp): #for option 3
+        if norm_std != True:
+            print('This option can only be runned with normalized standard deviation as True.')
+            return
+        fig, ax = plt.subplots(figsize=(10, 10))
+        var=[*var_ref,*var_comp]
+        i_end = len(var_ref)
+        #to find the max value to set on the x-y axis
+        std_max = []
+        for i in range(len(var_ref)):
+            std_m = (df[var_comp[i]].std()/df[var_ref[i]].std())
+            std_max.append(std_m)
+        maxx = np.nanmax(std_max)
+        index = 0
+        #loop over len of var_ref
+        for i in range(len(var_ref)):
+            var_ref1 = var_ref[i]
+            var_comp1 = var_comp[i]
+            model_ref = df[var_ref1]
+            std_mod = df[model_ref.name].std()
+
+            if i==i_end-1:
+                index = index + 1
+                show=True
+                run_taylor([var_ref1],[var_comp1],maxx,index,show,fig,ax)
+            else:
+                index = index + 1 
+                show=False
+                run_taylor([var_ref1],[var_comp1],maxx,index,show,fig,ax)
+            
+    else:   
+        print('The option you have sent in is invalid.')
+    #plt.savefig(output_file,dpi=200,facecolor='white',bbox_inches='tight')
+    return
+##################### down
+
+def plot_multi_joint_distribution_W10_Hs_Tp(data,var_w10='w10',var_hs='hs',var_tp='tp',var3='W10',var3_units='m/s',periods=[100],var3_bin=5,threshold_min=100,output_file='Hs.Tp.joint.distribution.multi.binned.var3.png'):  
+    #missing to connect them and to double check cond_param_HS_on_W10 (don't get the prober weibull graph)
+    import matplotlib.pyplot as plt
+    from cycler import cycler
+    from mpl_toolkits.mplot3d import Axes3D
+    import numpy as np
+
+    df = data.dropna()
+
+    #include the whole dataset also:
+    pdf_W10, pdf_HS = joint_distribution_W10_Hs_Tp(data=df,var_w10=var_w10,var_hs=var_hs,var_tp=var_tp,periods=periods)
+    breakpoint()
+
+    fig, ax = plt.subplots(figsize=(8,6))
+    plt.plot(np.log(df.W10),np.log(-np.log(1-pdf_W10)));plt.show()
+
+    plt.plot(np.log(h1_[1]),np.log(-np.log(1-pdf_HS)));plt.show()
+
+    return
+
+##################### above
 
 def plot_multi_joint_distribution_Hs_Tp_var3(data,var_hs='hs',var_tp='tp',var3='W10',var3_units='m/s',periods=[100],var3_bin=5,threshold_min=100,output_file='Hs.Tp.joint.distribution.multi.binned.var3.png'):  
     import matplotlib.pyplot as plt
     from cycler import cycler
+    from mpl_toolkits.mplot3d import Axes3D
+    import numpy as np
 
     """
     Plot joint distribution of Hs-Tp for a given return period for eached binned var3 data
@@ -615,17 +1048,22 @@ def plot_multi_joint_distribution_Hs_Tp_var3(data,var_hs='hs',var_tp='tp',var3='
         var3: e.g., 'W10' 
         var3_units: e.g., 'm/s'
         var3_bin: sets the bin size, e.g., 5 
-        threshold_min: provide is the minimum number of datapoints in the dataset, e.g., 100
+        threshold_min: provide the limit of the minimum number of datapoints in the dataset, e.g., 100
     """
+
     var3_name = var3 
     df = data.dropna()
-    max_var3 = max(df[var3])
+    max_var3 = max(df[var3]) 
     window = np.arange(0, max_var3 + var3_bin, var3_bin)
-    t3_ = []; h3_= []
-
+    t3_ = [] ; h3_= [] 
+    w10_= []    #t3_ = {} ; h3_= {} ; w10_= {}
+    dff3 = []
+    
     fig, ax = plt.subplots(figsize=(8,6))
-    custom_cycler = cycler(color=['b', 'g', 'r', 'c', 'm', 'y', 'k'])
-    ax.set_prop_cycle(custom_cycler)
+    #custom_cycler = cycler(color=['b', 'g', 'r', 'c', 'm', 'y', 'k'])
+    #ax.set_prop_cycle(custom_cycler)
+    cmap = plt.cm.Blues
+    ii = np.linspace(0.2,1,len(window)-1)
 
     for i in range(len(window)-1):
         var_3 = df[var3].where((df[var3] > window[i]) & (df[var3] <= window[i+1])).dropna() #w10 = (wind1,wind2]
@@ -634,17 +1072,28 @@ def plot_multi_joint_distribution_Hs_Tp_var3(data,var_hs='hs',var_tp='tp',var3='
         hs = df[var_hs].where(var_3.notnull()).dropna()
         tp = df[var_tp].where(var_3.notnull()).dropna()
         dff = pd.DataFrame({'HS': hs, 'TP': tp, var3_name: var_3})
+        #dff = xr.DataFrame({'HS': hs, 'TP': tp, var3_name: var_3})
         a1, a2, a3, b1, b2, b3, pdf_Hs, h, t3,h3,X,hs_tpl_tph = joint_distribution_Hs_Tp(data=dff,var_hs=var_hs,var_tp=var_tp,periods=periods)
-        t3_.append(t3)
-        h3_.append(h3)
+        t3_.append(t3) #t3_[ii,:] = t3 
+        h3_.append(h3)#h3_[i,:] = h3#
+        
         linestyle = '-' if i % 2 == 0 else '--'
         labels = str(np.round(window[i],2))+'-'+str(np.round(window[i+1],2))
-        plt.plot(t3[0],h3[0], linestyle=linestyle, label=var3_name+'$\\in$' + labels+' ['+var3_units+']')  
+        #plt.plot(t3[0],h3[0], linestyle=linestyle, label=var3_name+'$\\in$' + labels+' ['+var3_units+']') 
+        plt.plot(t3[0],h3[0], color=cmap(ii[i]), linestyle=linestyle, label=var3_name+'$\\in$' + labels+' ['+var3_units+']')  #color=cmap(0.5)
+        
+        #w10_lin = np.linspace(window[i],window[i+1],len(h3[0]))
+        w10_lin = np.linspace(window[i],window[i+1],len(h3[0]))
+        w10_.append(w10_lin)
+        dff3.append([t3[0],w10_lin,h3[0]])
+        #dff2 = dff2.append({'HS3': h3[0], 'TP3': t3[0], 'W10': w10_lin}, ignore_index=True)
 
+    #breakpoint()
+    
     #include the whole dataset also:
     a1, a2, a3, b1, b2, b3, pdf_Hs, h, t3,h3,X,hs_tpl_tph = joint_distribution_Hs_Tp(data=df,var_hs=var_hs,var_tp=var_tp,periods=periods)
     labels = str(np.round(window[0],2))+'-'+str(np.round(window[-1],2))
-    plt.plot(t3[0],h3[0],label=var3_name+'$_{all}$'+'$\\in$ ' + labels+ ' ['+var3_units+']') 
+    plt.plot(t3[0],h3[0],color=cmap(1.0),label=var3_name+'$_{all}$'+'$\\in$ ' + labels+ ' ['+var3_units+']') 
     plt.xlabel('Tp - Peak Period [s]')
     plt.suptitle('Return period = '+ str(periods[0])+'-year')
     plt.ylabel('Hs - Significant Wave Height [m]')
@@ -654,12 +1103,364 @@ def plot_multi_joint_distribution_Hs_Tp_var3(data,var_hs='hs',var_tp='tp',var3='
     #plt.ylim([0,np.ceil(max(max(h3_[-1])))]) #When the dataset is split
     plt.xlim([0,np.ceil(max(max(t3)))]) #When the whole dataset is included 
     plt.ylim([0,np.ceil(max(max(h3)))]) #When the whole dataset is included    
-    #plt.show()
-    plt.savefig(output_file,dpi=100,facecolor='white',bbox_inches='tight')
+   # plt.show()
+    #plt.savefig(output_file,dpi=100,facecolor='white',bbox_inches='tight')
+    #breakpoint()
+
+#####################
+# New idea: need to interpolate between the datapoints in the different [] before plotting them
+    Tre_dim_plot = True
+    
+    #df2 = pd.DataFrame([t3_,w10_,h3_], columns=['TP', 'W10','HS'])
+    df2 = pd.DataFrame(dff3, columns=['TP', 'W10','HS'])
+    
+    #fig = plt.figure()
+    #ax = fig.add_subplot(111, projection='3d')
+    from scipy.interpolate import griddata
+    if Tre_dim_plot == True: 
+        fig = plt.figure()  
+        ax = fig.add_subplot(111, projection='3d')
+        for i,row in df2.iterrows():
+            # Apply smoothing
+            from scipy.ndimage.filters import gaussian_filter
+            sigma = 0.7 # this parameter can be adjusted to increase or decrease smoothing
+         #   breakpoint()
+            data2 = np.array(row.tolist())
+            data2[0,:] = gaussian_filter(data2[0,:], sigma)
+            data2[1,:] = gaussian_filter(data2[1,:], sigma)
+            data2[2,:] = gaussian_filter(data2[2,:], sigma)
+           # X, Y = np.mgrid[data2[0,:].min():data2[0,:].max():(data2[0,:].shape)[0]*1j, data2[1,:].min():data2[1,:].max():(data2[1,:].shape)[0]*1j]#np.mgrid[0:1:100j, 0:1:100j]
+            X, Y = np.mgrid[data2[0,:].min():data2[0,:].max():(data2[0,:].shape)[0]*1j, data2[2,:].min():data2[2,:].max():(data2[2,:].shape)[0]*1j]#np.mgrid[0:1:100j, 0:1:100j]
+            #Z = griddata((data2[0,:], data2[1,:]), data2[2,:], (X, Y), method='linear')
+            Z = griddata((data2[0,:], data2[2,:]), data2[1,:], (X, Y), method='linear')
+            #ax.plot_surface(X, Y, Z,color=cmap(ii[i]))
+            ax.scatter(X,Y,Z)
+            ax.set_zlabel('W10')
+            ax.set_xlabel('Tp')
+            ax.set_ylabel('Hs')
+    plt.show()
+####################
+    #breakpoint()
+######################################
+    Tre_dim_plot_2 =  True
+
+    if Tre_dim_plot_2 == True: 
+        # Use np.concatenate to combine the arrays in each row into a single array
+        TP_combined = np.concatenate(df2.TP.values)
+        HS_combined = np.concatenate(df2.HS.values)
+        W10_combined = np.concatenate(df2.W10.values)
+        # Define the points and values for interpolation
+        points = np.transpose(np.vstack((TP_combined, W10_combined)))
+        values = HS_combined 
+       # breakpoint()
+        # Define the grid to interpolate onto
+        grid_x, grid_y = np.mgrid[min(TP_combined):max(TP_combined):100j, min(W10_combined):max(W10_combined):100j]  #Z 
+
+        # Use griddata for interpolation
+        grid_z = griddata(points, HS_combined, (grid_x, grid_y), method='linear')
+
+        # Create the 3D plot
+        fig = plt.figure(); ax = fig.add_subplot(111, projection='3d') 
+        #ax.plot_surface(grid_x, grid_y, grid_z)#; ax.set_xlabel('TP');ax.set_ylabel('W10');ax.set_zlabel('HS')
+        #ax.scatter(grid_x, grid_y, grid_z); ax.set_xlabel('TP');ax.set_ylabel('W10');ax.set_zlabel('HS')
+
+        #ax.plot_surface(grid_x, grid_y, grid_z, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        ax.plot_surface(grid_x, grid_y, grid_z, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        ax.set_xlabel('TP');ax.set_ylabel('W10');ax.set_zlabel('HS')
+        #fig.colorbar(ax, shrink=0.7, aspect=15)
+
+        ax.set_xlim([0, max(TP_combined)]); ax.set_ylim([0, max(W10_combined)])
+        plt.show()
+
+
+     #   breakpoint()
+        
+
+#############################
+#    df.interpolate(method ='linear', limit_direction ='forward') 
+
+  #####################################
+    Tre_dim_plot_2 =  True
+
+    if Tre_dim_plot_2 == True: 
+        # Use np.concatenate to combine the arrays in each row into a single array
+        #TP_combined = np.concatenate(df2.TP.values)  #orginal
+        #TP_combined = np.concatenate((df2.TP[0].data,df2.TP[1].data))
+        TP_combined = (df2.TP[0].data)
+        #HS_combined = np.concatenate(df2.HS.values) #orginal
+        #HS_combined = np.concatenate((df2.HS[0].data,df2.HS[1].data))
+        HS_combined = (df2.HS[0].data)
+        #W10_combined = np.concatenate(df2.W10[0:1].values)
+        #W10_combined = (df2.W10[1].data)
+        
+        # Create linspace from 10 to 15
+        linspace_up = np.linspace(0, 5, num=871) #num=1739
+        linspace_up1 = np.linspace(10, 15, num=870)
+        # Create linspace from 15 to 10
+        linspace_down = np.linspace(5, 0, num=872)
+        linspace_down1 = np.linspace(15, 10, num=869)
+        # Concatenate both linspaces
+        W10_combined = np.concatenate((linspace_up, linspace_down))#,linspace_up1, linspace_down1))
+ 
+        breakpoint()
+
+        # Apply smoothing
+        #from scipy.ndimage.filters import gaussian_filter
+        #sigma = 0.7 # this parameter can be adjusted to increase or decrease 
+        #ax.set_xlabel('TP');ax.set_zlabel('W10');ax.set_ylabel('HS')
+        #TP_combined = gaussian_filter(TP_combined, sigma)
+        #W10_combined = gaussian_filter(W10_combined, sigma)
+        #HS_combined = gaussian_filter(HS_combined, sigma)
+
+        # Apply smoothing
+        #from scipy.signal import savgol_filter
+        #window_length = 51  # must be odd, greater than polyorder, and less than the size of your array
+        #polyorder = 3  # order of the polynomial used in the filtering process
+        #TP_combined = savgol_filter(TP_combined, window_length, polyorder, axis=0)
+        #HS_combined = savgol_filter(HS_combined, window_length, polyorder, axis=0)
+        #W10_combined = savgol_filter(W10_combined, window_length, polyorder, axis=0)
+
+        # Define the grid to interpolate onto
+        #grid_x, grid_y = np.mgrid[min(TP_combined):max(TP_combined):300j, min(W10_combined):max(W10_combined):300j]  #Z 
+        #grid_xx, grid_yy = np.mgrid[min(TP_combined):max(TP_combined):300j, min(W10_combined):max(W10_combined):300j]  #Z 
+        grid_xx, grid_yy = np.mgrid[min(TP_combined):max(TP_combined):300j, min(HS_combined):max(HS_combined):300j]  #Z 
+
+        ##grid_xxx, grid_yyy = np.mgrid[min(W10_combined):max(W10_combined):300j, min(HS_combined):max(HS_combined):300j] #X
+        ##grid_xxxx, grid_yyyy = np.mgrid[min(TP_combined):max(TP_combined):300j, min(HS_combined):max(HS_combined):300j] #Y
+        # Use griddata for interpolation
+        grid_x = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), TP_combined, (grid_xx, grid_yy), method='linear')
+        #grid_x = griddata(np.transpose(np.vstack((TP_combined, W10_combined))), TP_combined, (grid_xx, grid_yy), method='linear')
+        grid_z = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), W10_combined, (grid_xx, grid_yy), method='linear')
+        #grid_y = griddata(np.transpose(np.vstack((TP_combined, W10_combined))), W10_combined, (grid_xx, grid_yy), method='linear')
+        grid_y = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), HS_combined, (grid_xx, grid_yy), method='linear')
+        #grid_z = griddata(np.transpose(np.vstack((TP_combined, W10_combined))), HS_combined, (grid_xx, grid_yy), method='linear')
+
+
+        # Create the 3D plot
+        fig = plt.figure(); ax = fig.add_subplot(111, projection='3d') 
+      #  ax.plot_surface(grid_X, grid_Z, grid_Y, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        ax.plot_surface(grid_x, grid_y, grid_z, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+       # ax.plot_surface(grid_xx, grid_yy, grid_y, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        #ax.set_xlabel('TP');ax.set_ylabel('W10');ax.set_zlabel('HS')
+        ax.set_xlabel('TP');ax.set_zlabel('W10');ax.set_ylabel('HS')
+
+        ax.set_xlim([0, max(TP_combined)]); ax.set_ylim([0, max(HS_combined)])
+        plt.show()
+
+
+      #  breakpoint()
+        ##plot them all together:Z_W10
+    #    fig = plt.figure()
+    #    ax = fig.add_subplot(111, projection='3d')
+    #    ax.plot_surface(grid_x, grid_xxx, grid_yyy, cmap='viridis', rstride=1, cstride=1, alpha=None, linewidth=0, antialiased=True)
+    #    ax.plot_surface(grid_xxxx, grid_y, grid_yyyy, cmap='viridis', rstride=1, cstride=1, alpha=None, linewidth=0, antialiased=True)
+    #    ax.plot_surface(grid_xx, grid_yy, grid_z, cmap='viridis', rstride=1, cstride=1, alpha=None, linewidth=0, antialiased=True)
+    #    ax.set_xlabel('TP');ax.set_ylabel('W10');ax.set_zlabel('HS')
+    #    ax.set_xlim([0, max(TP_combined)]); ax.set_ylim([0, max(W10_combined)])
+    #    plt.show()
+
+###################################
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Get unique values from TP and HS columns
+        tp2 = np.unique(TP_combined.data)#df2.TP.values)
+        hs2 = np.unique(HS_combined.data)#df2.HS.values)
+
+        # Convert to 2D grid
+        TP, HS = np.meshgrid(tp2, hs2)
+
+        # Assuming W is your 1D array
+        W = np.arange(0, 40, 10)
+
+        # Convert W to 2D using np broadcasting
+        W_2d = np.full((TP.shape[0], HS.shape[1]), W[:, None])
+
+        # Plot using plot_surface
+        ax.plot_surface(TP, HS, W_2d)
+
+###################################
+        from scipy import interpolate
+      #  breakpoint()
+        # To interpolate within these arrays, you can use something like this:
+        df = df2 
+        for column in df.columns:
+            for i in range(len(df[column])):
+                x = np.arange(len(df[column][i]))
+                breakpoint()
+                f = interpolate.interp1d(x, df[column][i])
+                xnew = np.arange(0, len(df[column][i])-1, 0.5)
+                df[column][i] = f(xnew)
+        
+       # breakpoint()
+
+#         for column in df.columns:
+#             for i in range(len(df[column])):
+#                 x = np.arange(len(df[column][i]))
+#                 f = interpolate.interp1d(x, df[column][i])
+#                 xnew = np.arange(0, len(df[column][i])-1, 0.5)
+#                 df.at[i, column] = f(xnew)
+###################################
+       # Create a grid to interpolate onto
+        x = np.linspace(min(TP_combined), max(TP_combined), num=300)
+        #y = np.linspace(min(W10_combined), max(W10_combined), num=300)
+        y = np.linspace(min(HS_combined), max(HS_combined), num=300)
+        X, Y = np.meshgrid(x, y)
+
+        # Interpolate each variable onto the grid
+        Z_HS = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), HS_combined, (X, Y), method='linear')
+        Z_TP = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), TP_combined, (X, Y), method='linear')
+        Z_W10 = griddata(np.transpose(np.vstack((TP_combined, HS_combined))), W10_combined, (X, Y), method='linear')
+
+        # Create 3D plot
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Plot the surface
+        ax.plot_surface(Z_TP, Z_HS, Z_W10, cmap='viridis', rstride=1, cstride=1, alpha=None, linewidth=0, antialiased=True)
+
+        ax.set_xlabel('TP_combined')
+        ax.set_zlabel('W10_combined')
+        ax.set_ylabel('HS_combined')
+
+        plt.show()
+##############################
+      #  breakpoint()
+
+        from scipy.interpolate import interp1d
+
+        # Assume W10_combined_full is the full range of W10_combined values
+        W10_combined_full = np.linspace(min(W10_combined), max(W10_combined), num=(W10_combined.shape[0]))
+
+        # Create interp1d objects for TP_combined and HS_combined, y=f(x)
+        interp_TP = interp1d(W10_combined, TP_combined, kind='cubic', fill_value="extrapolate")
+        interp_HS = interp1d(W10_combined, HS_combined, kind='cubic', fill_value="extrapolate")
+
+        # Use the interp1d objects to get the missing TP_combined and HS_combined values
+        TP_combined_full = interp_TP(W10_combined_full)
+        HS_combined_full = interp_HS(W10_combined_full)
+
+        grid_xx, grid_yy = np.mgrid[min(TP_combined_full):max(TP_combined_full):300j, min(HS_combined_full):max(HS_combined_full):300j]  #Z 
+        grid_x = griddata(np.transpose(np.vstack((TP_combined_full, HS_combined_full))), TP_combined_full, (grid_xx, grid_yy), method='linear')
+        grid_z = griddata(np.transpose(np.vstack((TP_combined_full, HS_combined_full))), W10_combined_full, (grid_xx, grid_yy), method='linear')
+        grid_y = griddata(np.transpose(np.vstack((TP_combined_full, HS_combined_full))), HS_combined_full, (grid_xx, grid_yy), method='linear')
+
+        # Create the 3D plot
+        fig = plt.figure(); ax = fig.add_subplot(111, projection='3d') 
+        #ax.scatter(grid_x, grid_y, grid_z)#, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        ax.plot_surface(grid_x, grid_y, grid_z, cmap = 'viridis', rstride=1, cstride=1, alpha=None,linewidth=0, antialiased=True) 
+        ax.set_xlabel('TP');ax.set_zlabel('W10');ax.set_ylabel('HS')
+
+        ax.set_xlim([0, max(TP_combined_full)]); ax.set_ylim([0, max(HS_combined_full)])
+        plt.show()
+
+
+############################## interpolation
+
+        from scipy.interpolate import RegularGridInterpolator as rgi
+        #my_interpolating_function = rgi((x,y,z), V)
+        x = np.linspace(min(TP_combined), max(TP_combined), num=300)
+        y = np.linspace(min(HS_combined), max(HS_combined), num=300)
+        z = np.linspace(min(W10_combined), max(W10_combined), num=300)
+        data = [TP_combined,HS_combined, W10_combined]
+        xg, yg ,zg = np.meshgrid(x, y, z, indexing='ij', sparse=True)
+        combined_3d_array = np.array((TP_combined, HS_combined, W10_combined))
+
+        interpolator = rgi((x, y, z), combined_3d_array)
+
+        point = np.array([new_TP_combined, _new_HS_combined, new_W10_combined])  # replace these with the coordinates of the point
+        interpolated_value = interpolator(point)
+        #my_interpolating_function = rgi((TP_combined,HS_combined,W10_combined), V)
+        #Vi = my_interpolating_function(array([xi,yi,zi]).T)
+
+############################## interpolation 2
+        from scipy import interpolate
+
+        # To interpolate within these arrays, you can use something like this:
+        df = df2 
+        for column,row in df:
+            for i in range(len(df[column])):
+                x = np.arange(len(df[column][i]))
+                f = interpolate.interp1d(x, df[column][i])
+                xnew = np.arange(0, len(df[column][i])-1, 0.5)
+                df[column][i] = f(xnew)
+
+##############################
+
+
+
+
+ #   df_n = df.to_numpy()/cluster/work/users/theajel/archive/sscam_thea/atm/hist
+ #   breakpoint()
+
+        #ax.set_xlabel('W10') 2
+        #ax.set_ylabel('Tp') 1
+        #ax.set_zlabel('Hs') 0
+ #   points2 = df[['TP', 'W10']].values[0:2]
+ #   values = df['HS'].values[0:2]
+ #   grid_x, grid_y = np.mgrid[df['TP'].min():df['TP'].max():100j, df['W10'].min():df['W10'].max():100j]
+
+    
+        # Plot the surface.
+        #surf = ax.plot_surface(X, Y, Z, cmap=cm.coolwarm,linewidth=0, antialiased=False)
+        ##################
+        #Assuming u, t, and w are your lists
+ #   u10 = np.linspace(window[i],window[i+1],len(h3[0]))
+ #   u10 = u10.reshape(1, -1)  # now u has shape (1, 813)
+    #u10 = u10.reshape(U.shape)
+    #w10 = np.array(u10)
+ #   w10 = np.array(w10_)
+ #   t33 = np.array(t3_)
+ #   h33 = np.array(h3_)
+
+    flattened_list_tp = [item for sublist in t3_ for item in sublist]
+#    flattened_list_tp = [item for sublist in df.TP for item in sublist]
+    flattened_list_hs = [item for sublist in h3_ for item in sublist]
+#    flattened_list_hs = [item for sublist in df.HS for item in sublist]
+    flattened_list_w10 = [item for sublist in w10_ for item in sublist]
+#    flattened_list_w10 = [item for sublist in df.W10 for item in sublist]
+    w10 = np.array(flattened_list_w10)
+    t33 = np.array(flattened_list_tp)
+    h33 = np.array(flattened_list_hs)
+
+        #U, T = np.meshgrid(u10, t33)
+        # Reshape w into a 2D array
+        #H= h33.reshape(U.shape)
+
+        #fig = plt.figure(); ax = fig.add_subplot(111, projection='3d')
+        #ax.scatter(w10,t33,h33); plt.show()
+        #ax.plot_surface(U, T, H)
+        #ax.set_xlabel('W10')
+        #ax.set_ylabel('Tp')
+        #ax.set_zlabel('Hs')
+
+        ############
+        # #Create a grid of points in the u, t space
+    #nr = 1
+    #X, Y = np.meshgrid(df['TP'][nr],df['W10'][nr]); points = np.column_stack((df['TP'][nr],df['W10'][nr])); W = griddata(points, df.HS[nr], (X, Y), method='linear')
+    #fig = plt.figure(); ax = fig.add_subplot(111, projection='3d');ax.plot_surface(X, Y, W);plt.show()
+
+ #   points2 = df[['TP', 'W10']].values[0:2]
+ #   values = df['HS'].values[0:2]
+ #   grid_x, grid_y = np.mgrid[df['TP'].min():df['TP'].max():100j, df['W10'].min():df['W10'].max():100j]
+ #   grid_z = griddata(points2, values, (grid_x, grid_y), method='linear')
+
+
+ #   U, T = np.meshgrid(np.linspace(min(w10), max(w10), len(w10)), np.linspace(min(t33), max(t33), len(t33)))
+    #U, T = np.meshgrid(np.linspace(min(df.W10[0]), max(df.W10[0]), len(df.W10[0])), np.linspace(min(df.TP[0]), max(df.TP[0]), len(df.TP[0])))
+ #   from scipy.interpolate import griddata
+ #   points = np.column_stack((w10, t33))
+ #   W = griddata(points, h33, (U, T), method='linear')
+        # Interpolate to get W values at all points in the grid
+        #W = griddata((w10, t33), h33, (U, T), method='cubic')
+
+        # Now you can use plot_surface
+#    fig = plt.figure(); ax = fig.add_subplot(111, projection='3d'); ax.plot_surface(U, T, W);plt.show()
+#    fig = plt.figure(); ax = fig.add_subplot(111, projection='3d'); ax.scatter(U, T, W);plt.show()
+
+
 
     return fig
-
-##################
 
 def plot_joint_distribution_Hs_Tp(data,var_hs='hs',var_tp='tp',periods=[1,10,100,10000], title='Hs-Tp joint distribution',output_file='Hs.Tp.joint.distribution.png',density_plot=False):
     a1, a2, a3, b1, b2, b3, pdf_Hs, h, t3,h3,X,hs_tpl_tph = joint_distribution_Hs_Tp(data=data,var_hs=var_hs,var_tp=var_tp,periods=periods)
